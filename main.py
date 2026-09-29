@@ -79,9 +79,8 @@ class MultiParserPlugin(Star):
         self,
         url: str,
         headers: dict[str, str] | None = None,
-        platform_name: str = "",
     ) -> VideoSizeInfo:
-        return await VideoSizeProbe(self.config, platform_name).probe(url, headers)
+        return await VideoSizeProbe(self.config).probe(url, headers)
 
     def _video_send_decision(self, size_info: VideoSizeInfo) -> tuple[bool, str]:
         return VideoSendPolicy(self.config).decide(size_info)
@@ -139,6 +138,13 @@ class MultiParserPlugin(Star):
     @filter.event_message_type(filter.EventMessageType.ALL)
     async def handle_parse(self, event: AstrMessageEvent):
         original_has_send_oper = getattr(event, "_has_send_oper", None)
+        group_id = str(event.get_group_id() or "").strip()
+        if group_id:
+            # 群聊按黑名单优先、白名单兜底过滤；私聊不参与名单判断。
+            blocked = {str(g).strip() for g in self.config.get("group_blacklist") or []}
+            allowed = {str(g).strip() for g in self.config.get("group_whitelist") or []}
+            if group_id in blocked or (allowed and group_id not in allowed):
+                return
         context = extract_context(event)
         if not context.combined_text:
             return
@@ -160,12 +166,10 @@ class MultiParserPlugin(Star):
                         video_size_info = await self._probe_video_size(
                             result.video_url,
                             result.video_download_headers,
-                            parser.name,
                         )
                     else:
                         video_size_info = await self._probe_video_size(
                             result.video_url,
-                            platform_name=parser.name,
                         )
                     should_send_video, video_reason = self._video_send_decision(
                         video_size_info
