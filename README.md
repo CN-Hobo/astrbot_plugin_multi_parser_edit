@@ -1,7 +1,7 @@
-# AstrBot 多平台内容解析器
+# AstrBot 多平台内容解析器_edit
 
 <p align="center">
-  <img src="https://github.com/Qfxaile/astrbot_plugin_multi_parser/blob/main/logo.png" alt="AstrBot 多平台内容解析器" width="180">
+  <img src="logo.png" alt="AstrBot 多平台内容解析器" width="180">
 </p>
 
 <p align="center">自动识别聊天消息中的内容链接，并发送作品信息、图文、视频或音频。</p>
@@ -16,6 +16,11 @@
 <div align="center">
   <img src="https://count.getloli.com/get/@Qfxaile-astrbot_multi_parser?theme=moebooru" alt="访问次数">
 </div>
+
+# 变更内容
+- 针对 GitHub 和 Pixiv 予以反向代理支持。以 InfinityFree 的免费主机为标准测试，支持自动完成AesJS挑战
+- 添加群聊黑白名单机制。黑名单优先、白名单非空才生效，防止所有群都在解析导致刷屏并频繁造成网络波动
+- 移除了原有的代理选项以及相关代码。因为大多平台在大陆地区都是能正常直连的
 
 <p align="center">
   <a href="#功能与支持">功能与支持</a> ·
@@ -43,7 +48,7 @@
 | Bilibili | BV、AV | Opus、动态、专栏、会员购详情 | `b23.tv`、`bili2233.cn`、直播间、番剧/电影/纪录片介绍、会员购票务/商品/工房/市集链接 |
 | 抖音 | 视频、直播 | 普通图文、Slides、商城商品标题与主图 | `v.douyin.com`、`jx.douyin.com`、抖音商城长链、汽水音乐 |
 | 番茄小说 | 不支持 | 小说标题、作者、简介与封面 | `changdunovel.com/t/...` 公开分享链接 |
-| 小红书 | 视频笔记 | 图文笔记 | `xhslink.com`、`xhslink.cn`、部分 JSON 分享卡片 |
+| 小红书 | 视频笔记 | 图文笔记 | `xhslink.com`、部分 JSON 分享卡片 |
 | 贴吧 | 首帖视频 | 楼主首帖正文 | `tieba.baidu.com/p/<帖子ID>` |
 | 微博 | 普通视频、视频页、TV | 微博、转发、长文章 | 桌面端、移动端及 API 分享链接 |
 | 微信 | 视频号 | 公众号文章 | 视频号短链及已带令牌的预览长链 |
@@ -92,6 +97,8 @@ git clone https://github.com/Qfxaile/astrbot_plugin_multi_parser.git astrbot_plu
 | 配置项 | 默认值 | 作用 |
 | --- | --- | --- |
 | `platform_switches` | 十二个平台启用，Pixiv 关闭 | 分别控制各平台的解析器；Pixiv 需显式开启 |
+| `group_whitelist` | 空 | 非空时仅这些群号触发自动解析；留空表示所有群都可触发，私聊不受影响 |
+| `group_blacklist` | 空 | 禁止自动解析的群号，优先级高于白名单 |
 | `filter_output_links` | `false` | 替换解析结果中的网页链接，不修改用户原消息 |
 | `filtered_link_text` | `[详细内容请打开原链接查看]` | 链接过滤后的替换文案 |
 | `enable_conversation_history` | `false` | 是否将解析结果写入当前 AstrBot LLM 会话 |
@@ -107,13 +114,14 @@ git clone https://github.com/Qfxaile/astrbot_plugin_multi_parser.git astrbot_plu
 
 | 配置项 | 默认值 | 作用 |
 | --- | --- | --- |
-| `proxy_url` | 空 | 全平台共用的 HTTP/HTTPS 代理地址，可包含用户名和密码 |
-| `proxy_switches` | 全部关闭 | 分别控制各平台是否使用代理 |
-| `github_token` | 空 | 选填的 GitHub Token，用于提高仓库页面请求的速率限制 |
+| `enable_reverse_proxy` | `false` | 是否让 GitHub 与 Pixiv 请求经反向代理转发 |
+| `reverse_proxy_prefix` | 空 | 反向代理 URL 前缀，目标地址编码后拼接在其后 |
 
-平台代理开启后，该平台的链接解析、接口请求、登录、图片下载、视频大小探测和插件侧视频下载都会使用 `proxy_url`。代理地址为空或格式无效时会停止对应请求，不会静默改为直连；插件不会自动读取进程的代理环境变量，代理配置校验错误不会回显地址或认证信息。
+插件不读取进程的代理环境变量（`HTTP_PROXY`、`HTTPS_PROXY` 等），HTTP 行为只由本插件配置决定。
 
-代理只作用于插件自身的 HTTP 请求。AstrBot 或 OneBot 收到图片、音频、视频 URL 后自行发起的下载，以及 `upload_group_file` 的远程文件上传，不经过本插件的代理。
+开启 `enable_reverse_proxy` 后，GitHub 仓库页与卡片图、Pixiv 页面接口与 `pximg` 图片请求的目标地址会编码为 `reverse_proxy_prefix + 目标地址`。代理返回 JS 挑战页（解出 Cookie 后跳转）时，插件会自动求解并携带 Cookie 重试，Cookie 按前缀与 User-Agent 缓存；代理的 301 路径跳转也会逐跳跟随。前缀为空或格式无效时不改写请求；缺少 `pycryptodome` 时挑战无法求解，对应解析会以明确的失败提示结束，不会回退为直连。反向代理只改变请求方式，URL 校验仍按目标站主机白名单执行，跳转地址不在代理主机或目标站白名单内时直接忽略该跳转。
+
+反向代理只作用于插件自身的 HTTP 请求。AstrBot 或 OneBot 收到图片、音频、视频 URL 后自行发起的下载，以及 `upload_group_file` 的远程文件上传，不经过本插件的反向代理。
 
 ### 视频
 
@@ -140,7 +148,7 @@ git clone https://github.com/Qfxaile/astrbot_plugin_multi_parser.git astrbot_plu
 | `cookies.xiaoheihe_cookies` | 否 | 配置后用于游戏详情请求，未配置时使用公开接口 |
 | `cookies.zhihu_cookies` | 是 | 用于知乎内容解析 |
 
-GitHub 默认启用，仅解析公开仓库主页；Issue、PR、文件、提交等仓库子路径不会触发解析。可在 `github_token` 中填写 GitHub Token 以提高请求速率限制。Token 仅用于请求 `github.com` 仓库页面，不会发送到 OpenGraph 图片地址。
+GitHub 默认启用，仅解析公开仓库主页，不需要 Token；Issue、PR、文件、提交等仓库子路径不会触发解析。
 
 番茄小说仅解析 `changdunovel.com/t/...` 公开分享链接，展示小说标题、作者、简介和封面，不抓取章节正文，也不需要 Cookie。
 
@@ -272,7 +280,7 @@ Pixiv 仅解析匿名可访问的公开插画作品，不需要 Cookie；动图�
 ```text
 astrbot_plugin_multi_parser/
 ├── main.py          # 插件装配与事件调度
-├── core/            # 领域契约、HTTP、媒体与渲染
+├── core/            # 领域契约、HTTP、反向代理与媒体渲染
 ├── services/        # 配置、登录、消息适配与投递策略
 ├── platforms/       # 平台适配器
 ├── tests/           # pytest 单元测试
