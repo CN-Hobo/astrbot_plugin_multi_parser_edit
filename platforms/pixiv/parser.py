@@ -6,10 +6,12 @@ from collections.abc import Mapping
 from urllib.parse import parse_qs
 
 import httpx
+from astrbot.api import logger
 
 from ...core.contracts import ParseContext, ParseResult
 from ...core.http import is_trusted_https_url
 from ...core.parser import BaseParser
+from ...core.reverse_proxy import proxy_get
 
 
 class PixivParser(BaseParser):
@@ -18,6 +20,7 @@ class PixivParser(BaseParser):
     name = "pixiv"
     display_name = "Pixiv"
     image_host_suffixes = ("pximg.net",)
+    reverse_proxy_host_suffixes = ("pixiv.net", "pximg.net")
     ARTWORK_PATTERNS = (
         re.compile(
             r"https?://(?:www\.)?pixiv\.net/artworks/(?P<artwork_id>\d+)"
@@ -61,6 +64,12 @@ class PixivParser(BaseParser):
                 metadata = await self._request_body(
                     client, f"{self.AJAX_BASE_URL}/{artwork_id}"
                 )
+                if isinstance(metadata, Mapping) and metadata.get("xRestrict"):
+                    # 成人向作品匿名访问时图片地址为空、分页接口返回 404，先给出
+                    # 明确提示，避免落到笼统的请求失败。
+                    raise ValueError(
+                        "该作品包含成人向内容，Pixiv 匿名访问无法获取图片。"
+                    )
                 pages = await self._request_body(
                     client, f"{self.AJAX_BASE_URL}/{artwork_id}/pages"
                 )
@@ -68,14 +77,25 @@ class PixivParser(BaseParser):
                 return await self.materialize_images(result, client, artwork_url)
         except ValueError as exc:
             return ParseResult(platform=self.name, error=str(exc))
-        except (httpx.HTTPError, TypeError, KeyError):
+        except (httpx.HTTPError, TypeError, KeyError) as exc:
+            # HTTP 状态异常已由 raise_for_response_status 记录，这里补记连接与代理层失败。
+            if isinstance(exc, httpx.RequestError) and not isinstance(
+                exc, httpx.HTTPStatusError
+            ):
+                logger.warning(f"Pixiv请求异常：{type(exc).__name__}：{exc}")
             return ParseResult(
                 platform=self.name,
                 error="Pixiv作品请求失败，请稍后重试。",
             )
 
     async def _request_body(self, client: httpx.AsyncClient, url: str) -> object:
-        response = await client.get(url)
+        response = await proxy_get(
+            client,
+            self.config,
+            url,
+            headers={"User-Agent": self.HEADERS["User-Agent"]},
+            host_suffixes=self.reverse_proxy_host_suffixes,
+        )
         self.raise_for_response_status(response)
         try:
             payload = response.json()
