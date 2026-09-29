@@ -5,10 +5,18 @@ from html.parser import HTMLParser
 from urllib.parse import urljoin, urlsplit
 
 import httpx
+from astrbot.api import logger
 
 from ...core.contracts import ParseContext, ParseResult
 from ...core.http import is_trusted_https_url
 from ...core.parser import BaseParser
+from ...core.reverse_proxy import (
+    challenge_retry_url,
+    cookie_headers,
+    is_proxy_url,
+    rewrite_url,
+    unwrap_proxy_url,
+)
 
 
 class _OpenGraphImageParser(HTMLParser):
@@ -40,6 +48,11 @@ class GitHubParser(BaseParser):
         "repository-images.githubusercontent.com",
     )
     repository_page_hosts = frozenset({"github.com", "www.github.com"})
+    reverse_proxy_host_suffixes = (
+        "github.com",
+        "opengraph.githubassets.com",
+        "repository-images.githubusercontent.com",
+    )
     MAX_REPOSITORY_REDIRECTS = 5
     MAX_REPOSITORY_HTML_BYTES = 2 * 1024 * 1024
     URL_PATTERN = re.compile(
@@ -84,7 +97,12 @@ class GitHubParser(BaseParser):
                     },
                 )
                 return await self.materialize_images(result, client, repository_url)
-        except httpx.HTTPError:
+        except httpx.HTTPError as exc:
+            # HTTP 状态异常已由 raise_for_response_status 记录，这里补记连接与代理层失败。
+            if isinstance(exc, httpx.RequestError) and not isinstance(
+                exc, httpx.HTTPStatusError
+            ):
+                logger.warning(f"GitHub请求异常：{type(exc).__name__}：{exc}")
             return ParseResult(
                 platform=self.name,
                 error="GitHub仓库卡片请求失败，请稍后重试。",
@@ -97,49 +115,68 @@ class GitHubParser(BaseParser):
     ) -> str:
         """读取仓库页声明的官方卡片地址，避免随机缓存键触发限流。"""
         current_url = repository_url
+        user_agent = self.HEADERS["User-Agent"]
         for redirect_count in range(self.MAX_REPOSITORY_REDIRECTS + 1):
-            self._validate_repository_page_url(current_url)
+            if not is_proxy_url(current_url, self.config):
+                self._validate_repository_page_url(current_url)
+            request_url = rewrite_url(
+                current_url, self.config, self.reverse_proxy_host_suffixes
+            )
             async with client.stream(
                 "GET",
-                current_url,
-                headers=self._repository_request_headers(),
+                request_url,
+                headers={
+                    "Accept": (
+                        "text/html,application/xhtml+xml,application/xml;q=0.9,"
+                        "*/*;q=0.8"
+                    ),
+                    **cookie_headers(self.config, user_agent),
+                },
             ) as response:
                 if 300 <= response.status_code < 400:
                     location = response.headers.get("Location")
                     if redirect_count >= self.MAX_REPOSITORY_REDIRECTS or not location:
                         raise httpx.InvalidURL("too many repository redirects")
-                    current_url = urljoin(current_url, location)
+                    current_url = urljoin(str(response.url), location)
                     continue
 
-                response.raise_for_status()
+                try:
+                    response.raise_for_status()
+                except httpx.HTTPStatusError:
+                    # 卡片请求失败只给用户提示语，这里留下主机与状态码便于定位。
+                    logger.warning(
+                        f"GitHub仓库页请求返回异常状态 {response.status_code}"
+                        f"（{response.url.host}）"
+                    )
+                    raise
                 content_type = response.headers.get("Content-Type", "")
                 if "text/html" not in content_type.lower():
                     raise httpx.InvalidURL("repository page is not HTML")
                 html = await self._read_repository_html(response)
 
+            page_text = html.decode("utf-8", errors="replace")
+            retry_url = challenge_retry_url(
+                self.config, page_text, str(response.url), user_agent
+            )
+            if retry_url:
+                current_url = retry_url
+                continue
+
             parser = _OpenGraphImageParser()
-            parser.feed(html.decode("utf-8", errors="replace"))
+            parser.feed(page_text)
             if not parser.image_url:
                 raise httpx.InvalidURL("missing OpenGraph image URL")
+            # 反代会把 HTML 中的地址改写成代理地址，先还原再按原始主机做可信校验。
+            image_url = unwrap_proxy_url(parser.image_url, self.config)
             if not is_trusted_https_url(
-                parser.image_url,
+                image_url,
                 self.image_host_suffixes,
                 allow_fragment=False,
             ):
                 raise httpx.InvalidURL("untrusted OpenGraph image URL")
-            return parser.image_url
+            return image_url
 
         raise httpx.InvalidURL("too many repository redirects")
-
-    def _repository_request_headers(self) -> dict[str, str]:
-        """构造仓库页面请求头，按需附加 GitHub Token。"""
-        headers = {
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
-        }
-        token = str(self.config.get("github_token") or "").strip()
-        if token:
-            headers["Authorization"] = f"Bearer {token}"
-        return headers
 
     async def _read_repository_html(self, response: httpx.Response) -> bytes:
         """在固定大小上限内读取仓库页面，避免异常响应耗尽内存。"""
