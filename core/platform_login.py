@@ -9,7 +9,7 @@ from io import BytesIO
 import httpx
 import qrcode
 
-from .http import http_client_proxy_options, request_timeout
+from .http import request_timeout
 
 
 class PlatformLoginError(ValueError):
@@ -92,7 +92,7 @@ class HTTPPlatformLoginProvider(PlatformLoginProvider):
         else:
             self._client = httpx.AsyncClient(
                 timeout=request_timeout(config),
-                **http_client_proxy_options(config, self.name),
+                trust_env=False,
                 **client_options,
             )
 

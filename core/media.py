@@ -10,7 +10,14 @@ import httpx
 from astrbot.api import logger
 
 from .contracts import ParseResult
-from .http import http_client_proxy_options, is_trusted_https_url, request_timeout
+from .http import is_trusted_https_url, request_timeout
+from .reverse_proxy import (
+    challenge_retry_url,
+    cookie_headers,
+    is_proxy_url,
+    reverse_proxy_prefix,
+    rewrite_url,
+)
 
 FORBIDDEN_MEDIA_HEADERS = {"authorization", "cookie", "proxy-authorization"}
 
@@ -67,9 +74,11 @@ class ImageMaterializer:
         self,
         config: Mapping[str, object],
         allowed_host_suffixes: tuple[str, ...] = (),
+        proxy_host_suffixes: tuple[str, ...] = (),
     ) -> None:
         self.config = config
         self.allowed_host_suffixes = allowed_host_suffixes
+        self.proxy_host_suffixes = proxy_host_suffixes
 
     async def materialize(
         self,
@@ -207,19 +216,42 @@ class ImageMaterializer:
         referer: str,
     ) -> Path:
         current_url = image_url
+        user_agent = str(client.headers.get("User-Agent", ""))
+        proxy_active = bool(self.proxy_host_suffixes) and bool(
+            reverse_proxy_prefix(self.config)
+        )
         for redirect_count in range(6):
-            self._validate_image_url(current_url)
+            if not is_proxy_url(current_url, self.config):
+                self._validate_image_url(current_url)
+            request_url = rewrite_url(
+                current_url, self.config, self.proxy_host_suffixes
+            )
             async with client.stream(
                 "GET",
-                current_url,
-                headers={"Referer": referer},
+                request_url,
+                headers={"Referer": referer, **cookie_headers(self.config, user_agent)},
                 follow_redirects=False,
             ) as response:
                 if 300 <= response.status_code < 400:
                     location = response.headers.get("Location")
                     if redirect_count >= 5 or not location:
                         raise httpx.InvalidURL("too many image redirects")
-                    current_url = urljoin(current_url, location)
+                    current_url = urljoin(str(response.url), location)
+                    continue
+
+                chunks = response.aiter_bytes(chunk_size=64 * 1024)
+                first_chunk = await anext(chunks, None)
+                # 反代 Cookie 失效时会返回挑战页；先识别再落盘，避免把 HTML 当图片保存。
+                retry_url = ""
+                if proxy_active and first_chunk is not None:
+                    retry_url = challenge_retry_url(
+                        self.config,
+                        first_chunk.decode("utf-8", errors="replace"),
+                        str(response.url),
+                        user_agent,
+                    )
+                if retry_url:
+                    current_url = retry_url
                     continue
 
                 response.raise_for_status()
@@ -228,7 +260,9 @@ class ImageMaterializer:
                 )
                 try:
                     with image_path.open("wb") as image_file:
-                        async for chunk in response.aiter_bytes(chunk_size=64 * 1024):
+                        if first_chunk is not None:
+                            image_file.write(first_chunk)
+                        async for chunk in chunks:
                             image_file.write(chunk)
                 except Exception:
                     image_path.unlink(missing_ok=True)
@@ -327,7 +361,7 @@ class VideoMaterializer:
             timeout=request_timeout(self.config),
             headers=headers,
             follow_redirects=False,
-            **http_client_proxy_options(self.config, result.platform),
+            trust_env=False,
         ) as client:
             video_path = await self._download(client, result.video_url)
         result.temporary_files.append(video_path)

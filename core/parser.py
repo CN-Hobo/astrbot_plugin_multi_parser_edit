@@ -3,6 +3,7 @@
 from collections.abc import Mapping
 
 import httpx
+from astrbot.api import logger
 
 from .contracts import ParseContext, ParseResult
 from .http import (
@@ -10,7 +11,6 @@ from .http import (
     CookieAccessError,
     build_cookie_access_error,
     cookie_config_value,
-    http_client_proxy_options,
     raise_for_cookie_access,
     request_timeout,
 )
@@ -26,6 +26,10 @@ class BaseParser:
     cookie_config_key = ""
     cookie_failure_status_codes = AUTH_FAILURE_STATUS_CODES
     image_host_suffixes: tuple[str, ...] = ()
+    # 声明需要经反向代理访问的主机；未声明的平台不会改写任何请求。
+    reverse_proxy_host_suffixes: tuple[str, ...] = ()
+    # 创建 HTTP 客户端的公共参数：禁用进程环境代理，网络行为只由插件配置决定。
+    http_client_options = {"trust_env": False}
 
     def __init__(self, config: Mapping[str, object]):
         self.config = config
@@ -33,11 +37,6 @@ class BaseParser:
     @property
     def request_timeout(self) -> float:
         return request_timeout(self.config)
-
-    @property
-    def http_client_options(self) -> dict[str, object]:
-        """返回当前平台创建 HTTP 客户端时使用的代理参数。"""
-        return http_client_proxy_options(self.config, self.name)
 
     async def match(self, context: ParseContext) -> bool:
         raise NotImplementedError
@@ -64,7 +63,15 @@ class BaseParser:
             cookie_value=cookie_config_value(self.config, self.cookie_config_key),
             status_codes=self.cookie_failure_status_codes,
         )
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError:
+            # 失败会转成给用户的提示语，这里留下主机与状态码便于对照日志定位。
+            logger.warning(
+                f"{self.display_name}请求返回异常状态 "
+                f"{response.status_code}（{response.url.host}）"
+            )
+            raise
 
     async def materialize_images(
         self,
@@ -72,7 +79,11 @@ class BaseParser:
         client: httpx.AsyncClient,
         referer: str,
     ) -> ParseResult:
-        materializer = ImageMaterializer(self.config, self.image_host_suffixes)
+        materializer = ImageMaterializer(
+            self.config,
+            self.image_host_suffixes,
+            self.reverse_proxy_host_suffixes,
+        )
         return await materializer.materialize(result, client, referer)
 
     async def materialize_public_images(
