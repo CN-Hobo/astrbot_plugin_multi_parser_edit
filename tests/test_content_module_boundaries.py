@@ -118,20 +118,21 @@ def test_zhihu_result_helpers_use_descriptive_module_name():
     assert find_spec(f"{module_prefix}._handler_common") is None
 
 
-def test_all_production_http_clients_include_proxy_options():
-    def is_proxy_options(keyword: ast.keyword) -> bool:
+def test_all_production_http_clients_disable_environment_proxy():
+    def disables_environment_proxy(keyword: ast.keyword) -> bool:
         value = keyword.value
-        return keyword.arg is None and (
-            (isinstance(value, ast.Attribute) and value.attr == "http_client_options")
-            or (
-                isinstance(value, ast.Call)
-                and isinstance(value.func, ast.Name)
-                and value.func.id == "http_client_proxy_options"
+        if keyword.arg is None:
+            return (
+                isinstance(value, ast.Attribute) and value.attr == "http_client_options"
             )
+        return (
+            keyword.arg == "trust_env"
+            and isinstance(value, ast.Constant)
+            and value.value is False
         )
 
     project_root = Path(__file__).parents[1]
-    missing_proxy_options = []
+    missing_client_options = []
     source_paths = [
         *(project_root / "core").rglob("*.py"),
         *(project_root / "services").rglob("*.py"),
@@ -154,9 +155,11 @@ def test_all_production_http_clients_include_proxy_options():
                 and node.func.value.id == "httpx"
             ):
                 continue
-            if not any(is_proxy_options(keyword) for keyword in node.keywords):
-                missing_proxy_options.append(
+            if not any(
+                disables_environment_proxy(keyword) for keyword in node.keywords
+            ):
+                missing_client_options.append(
                     f"{source_path.relative_to(project_root)}:{node.lineno}"
                 )
 
-    assert missing_proxy_options == []
+    assert missing_client_options == []

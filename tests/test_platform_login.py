@@ -40,7 +40,7 @@ async def test_http_login_provider_closes_owned_client():
 
 
 @pytest.mark.asyncio
-async def test_http_login_provider_uses_platform_proxy(monkeypatch):
+async def test_http_login_provider_disables_process_environment_proxy(monkeypatch):
     captured_options = {}
 
     class FakeClient:
@@ -52,17 +52,12 @@ async def test_http_login_provider_uses_platform_proxy(monkeypatch):
         return FakeClient()
 
     monkeypatch.setattr(platform_login.httpx, "AsyncClient", create_client)
-    provider = StubProvider(
-        {
-            "proxy_url": "http://proxy.example.com:8080",
-            "proxy_switches": {"pixiv": True},
-        }
-    )
+    provider = StubProvider({})
 
     await provider.close()
 
-    assert captured_options["proxy"] == "http://proxy.example.com:8080"
     assert captured_options["trust_env"] is False
+    assert "proxy" not in captured_options
 
 
 @pytest.mark.asyncio

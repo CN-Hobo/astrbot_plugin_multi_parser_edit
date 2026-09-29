@@ -27,7 +27,7 @@ def test_video_size_policy_accepts_files_within_limit():
 
 
 @pytest.mark.asyncio
-async def test_video_size_probe_uses_platform_proxy(monkeypatch):
+async def test_video_size_probe_disables_process_environment_proxy(monkeypatch):
     captured_options = {}
 
     class FakeClient:
@@ -50,16 +50,10 @@ async def test_video_size_probe_uses_platform_proxy(monkeypatch):
         return FakeClient()
 
     monkeypatch.setattr(video.httpx, "AsyncClient", create_client)
-    probe = VideoSizeProbe(
-        {
-            "proxy_url": "http://proxy.example.com:8080",
-            "proxy_switches": {"pixiv": True},
-        },
-        platform_name="pixiv",
-    )
+    probe = VideoSizeProbe({})
 
     size_info = await probe.probe("https://example.com/video.mp4")
 
     assert size_info.size_bytes == 123
-    assert captured_options["proxy"] == "http://proxy.example.com:8080"
     assert captured_options["trust_env"] is False
+    assert "proxy" not in captured_options

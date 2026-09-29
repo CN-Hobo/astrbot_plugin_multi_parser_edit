@@ -110,7 +110,7 @@ async def test_pixiv_parse_handles_public_ajax_responses(monkeypatch):
         async def __aexit__(self, exc_type, exc, tb):
             return None
 
-        async def get(self, url):
+        async def get(self, url, **kwargs):
             return FakeResponse(responses[url])
 
     monkeypatch.setattr(httpx, "AsyncClient", lambda **_: FakeClient())
@@ -146,7 +146,7 @@ async def test_pixiv_parse_returns_error_for_unavailable_ajax_payload(monkeypatc
         async def __aexit__(self, exc_type, exc, tb):
             return None
 
-        async def get(self, url):
+        async def get(self, url, **kwargs):
             return FakeResponse()
 
     monkeypatch.setattr(httpx, "AsyncClient", lambda **_: FakeClient())
@@ -157,3 +157,63 @@ async def test_pixiv_parse_returns_error_for_unavailable_ajax_payload(monkeypatc
 
     assert result.error == "Pixiv作品不可访问，可能已删除或受到访问限制。"
     assert "private detail" not in result.error
+
+
+async def test_pixiv_parse_logs_transport_error_for_diagnosis(monkeypatch, caplog):
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, url, **kwargs):
+            raise httpx.ProxyError("400 Bad Request")
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **_: FakeClient())
+
+    result = await PixivParser({}).parse(
+        ParseContext(text="https://www.pixiv.net/artworks/123456")
+    )
+
+    assert result.error == "Pixiv作品请求失败，请稍后重试。"
+    assert "Pixiv请求异常：ProxyError：400 Bad Request" in caplog.text
+
+
+async def test_pixiv_parse_reports_adult_work_for_anonymous_access(monkeypatch):
+    class FakeResponse:
+        status_code = 200
+
+        def raise_for_status(self):
+            return None
+
+        def json(self):
+            return {
+                "error": False,
+                "body": {
+                    "illustType": 0,
+                    "xRestrict": 1,
+                    "title": "成人向作品",
+                    "urls": {"original": None},
+                },
+            }
+
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get(self, url, **kwargs):
+            # 匿名访问下分页接口对成人向作品返回 404，解析应在此前就明确失败。
+            assert not url.endswith("/pages")
+            return FakeResponse()
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **_: FakeClient())
+
+    result = await PixivParser({}).parse(
+        ParseContext(text="https://www.pixiv.net/artworks/123456")
+    )
+
+    assert result.error == "该作品包含成人向内容，Pixiv 匿名访问无法获取图片。"

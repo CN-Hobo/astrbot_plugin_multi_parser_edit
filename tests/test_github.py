@@ -107,56 +107,6 @@ async def test_github_fetches_opengraph_card_after_safe_redirect():
     ]
 
 
-async def test_github_repository_request_uses_configured_token():
-    request_headers = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        request_headers.append(dict(request.headers))
-        return httpx.Response(
-            200,
-            headers={"Content-Type": "text/html"},
-            text=(
-                '<meta property="og:image" content="https://opengraph.githubassets.com/'
-                '123/card.png">'
-            ),
-            request=request,
-        )
-
-    parser = GitHubParser({"github_token": "github-secret"})
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        await parser._fetch_opengraph_url(
-            client,
-            "https://github.com/AstrBotDevs/AstrBot",
-        )
-
-    assert request_headers[0]["authorization"] == "Bearer github-secret"
-
-
-async def test_github_repository_request_omits_empty_token():
-    request_headers = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        request_headers.append(dict(request.headers))
-        return httpx.Response(
-            200,
-            headers={"Content-Type": "text/html"},
-            text=(
-                '<meta property="og:image" content="https://opengraph.githubassets.com/'
-                '123/card.png">'
-            ),
-            request=request,
-        )
-
-    parser = GitHubParser({"github_token": "  "})
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
-        await parser._fetch_opengraph_url(
-            client,
-            "https://github.com/AstrBotDevs/AstrBot",
-        )
-
-    assert "Authorization" not in request_headers[0]
-
-
 async def test_github_rejects_untrusted_opengraph_card_url():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(
@@ -216,6 +166,7 @@ async def test_github_rejects_oversized_repository_page():
 
 async def test_github_parse_returns_readable_error_when_card_download_fails(
     monkeypatch,
+    caplog,
 ):
     parser = GitHubParser({})
 
@@ -235,3 +186,4 @@ async def test_github_parse_returns_readable_error_when_card_download_fails(
 
     assert result.error == "GitHub仓库卡片请求失败，请稍后重试。"
     assert "private network detail" not in result.error
+    assert "GitHub请求异常：ConnectError" in caplog.text

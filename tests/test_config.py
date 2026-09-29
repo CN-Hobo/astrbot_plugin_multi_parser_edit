@@ -60,20 +60,6 @@ def test_schema_uses_platform_switches_without_legacy_settings():
     assert schema["filter_output_links"]["default"] is False
     assert schema["filtered_link_text"]["default"] == "[详细内容请打开原链接查看]"
 
-    proxy_url = schema["proxy_url"]
-    assert proxy_url["type"] == "text"
-    assert proxy_url["default"] == ""
-    proxy_switches = schema["proxy_switches"]
-    assert proxy_switches["type"] == "object"
-    assert tuple(proxy_switches["items"]) == PLATFORMS
-    for platform in PLATFORMS:
-        assert proxy_switches["items"][platform]["type"] == "bool"
-        assert proxy_switches["items"][platform]["default"] is False
-
-    github_token = schema["github_token"]
-    assert github_token["type"] == "text"
-    assert github_token["default"] == ""
-
     over_limit_action = schema["video_over_limit_action"]
     assert over_limit_action["type"] == "string"
     assert over_limit_action["default"] == "direct_link"
@@ -136,3 +122,12 @@ def test_schema_exposes_optional_conversation_history_modes():
     assert mode["default"] == "text_only"
     assert mode["options"] == ["text_only", "text_and_images"]
     assert mode["labels"] == ["仅保存文字", "保存文字和图片"]
+
+
+def test_schema_exposes_group_allow_and_deny_lists():
+    schema_path = Path(__file__).parents[1] / "_conf_schema.json"
+    schema = json.loads(schema_path.read_text(encoding="utf-8"))
+
+    for key in ("group_whitelist", "group_blacklist"):
+        assert schema[key]["type"] == "list"
+        assert schema[key]["default"] == []
