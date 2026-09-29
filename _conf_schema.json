@@ -84,6 +84,18 @@
       }
     }
   },
+  "group_whitelist": {
+    "description": "解析白名单群",
+    "type": "list",
+    "default": [],
+    "hint": "非空时仅这些群号触发自动解析；留空表示所有群都可触发，私聊不受影响。"
+  },
+  "group_blacklist": {
+    "description": "解析黑名单群",
+    "type": "list",
+    "default": [],
+    "hint": "这些群号禁止自动解析，优先级高于白名单。"
+  },
   "filter_output_links": {
     "description": "过滤解析结果链接",
     "type": "bool",
@@ -136,89 +148,17 @@
     "default": 30,
     "hint": "解析接口请求超时时间，单位为秒。"
   },
-  "proxy_url": {
-    "description": "代理地址",
+  "enable_reverse_proxy": {
+    "description": "启用反向代理",
+    "type": "bool",
+    "default": false,
+    "hint": "开启后 GitHub 与 Pixiv 的页面、接口和图片请求经反向代理转发，代理返回的 JS 挑战由插件自动求解。"
+  },
+  "reverse_proxy_prefix": {
+    "description": "反向代理地址前缀",
     "type": "text",
     "default": "",
-    "hint": "选填，支持 HTTP/HTTPS 代理；包含认证信息时请勿泄露。"
-  },
-  "proxy_switches": {
-    "description": "平台代理",
-    "type": "object",
-    "hint": "开启后，该平台的解析、登录和媒体请求使用代理。",
-    "items": {
-      "bilibili": {
-        "description": "B站",
-        "type": "bool",
-        "default": false
-      },
-      "douyin": {
-        "description": "抖音",
-        "type": "bool",
-        "default": false
-      },
-      "fanqie": {
-        "description": "番茄小说",
-        "type": "bool",
-        "default": false
-      },
-      "redbook": {
-        "description": "小红书",
-        "type": "bool",
-        "default": false
-      },
-      "tieba": {
-        "description": "贴吧",
-        "type": "bool",
-        "default": false
-      },
-      "weibo": {
-        "description": "微博",
-        "type": "bool",
-        "default": false
-      },
-      "wechat": {
-        "description": "微信",
-        "type": "bool",
-        "default": false
-      },
-      "xiaoheihe": {
-        "description": "小黑盒",
-        "type": "bool",
-        "default": false
-      },
-      "zhihu": {
-        "description": "知乎",
-        "type": "bool",
-        "default": false
-      },
-      "github": {
-        "description": "GitHub",
-        "type": "bool",
-        "default": false
-      },
-      "qqchannel": {
-        "description": "腾讯频道",
-        "type": "bool",
-        "default": false
-      },
-      "qzone": {
-        "description": "QQ空间",
-        "type": "bool",
-        "default": false
-      },
-      "pixiv": {
-        "description": "Pixiv",
-        "type": "bool",
-        "default": false
-      }
-    }
-  },
-  "github_token": {
-    "description": "GitHub Token",
-    "type": "text",
-    "default": "",
-    "hint": "选填，用于提高 GitHub 仓库页面请求的速率限制。"
+    "hint": "反向代理 URL 前缀，目标地址编码后拼接在其后，例如 https://example.com/fxdl.php?url="
   },
   "image_download_concurrency": {
     "description": "图片下载并发数",
