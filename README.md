@@ -17,7 +17,7 @@
   <img src="https://count.getloli.com/get/@Qfxaile-astrbot_multi_parser?theme=moebooru" alt="访问次数">
 </div>
 
-# 变更内容
+# 变更内容（基于1.2.0版本）
 - 针对 GitHub 和 Pixiv 予以反向代理支持。以 InfinityFree 的免费主机为标准测试，支持自动完成AesJS挑战
 - 添加群聊黑白名单机制。黑名单优先、白名单非空才生效，防止所有群都在解析导致刷屏并频繁造成网络波动
 - 移除了原有的代理选项以及相关代码。因为大多平台在大陆地区都是能正常直连的
